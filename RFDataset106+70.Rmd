@@ -1,0 +1,131 @@
+---
+title: "RFDataset106+70/109+70"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen = 999)
+library(dplyr)
+library(readxl)
+library(stringr)
+library(gmodels)
+library(tidyr)
+
+library(stats)
+library(lme4)
+library(lmtest)
+
+library(scales)
+library(tidyverse)
+library(grid)
+
+
+library(fastR2)
+setwd("/Users/zhm/R/CoHOST")
+```
+
+
+```{r HCsdata}
+ds11 <- read_xlsx("HCsRF_data.xlsx")
+names(ds11)<-str_replace_all(names(ds11), c(" " = ".", ":"=""))
+ds11$Arm2=rep(0,364)
+ds11$Arm2[ds11$Event.Name=="Day 1 (Arm 2: COVID-HC Arm)"]=1
+ds11$Event.Name[ds11$Event.Name=="Day 1 (Arm 2: COVID-HC Arm)"]="Day 1 (Arm 1: COVID Arm)"
+ds11$Event.Name[ds11$Event.Name=="Day 0 (Arm 2: COVID-HC Arm)"]="Day 0 (Arm 1: COVID Arm)"
+ds11$Race[ds11$Event.Name=="Day 1 (Arm 1: COVID Arm)"]=
+ds11$Race[ds11$Event.Name=="Day 0 (Arm 1: COVID Arm)"]
+ds11$Ethnicity[ds11$Event.Name=="Day 1 (Arm 1: COVID Arm)"]=
+ds11$Ethnicity[ds11$Event.Name=="Day 0 (Arm 1: COVID Arm)"]
+ds12 <- ds11[ds11$Event.Name=="Day 1 (Arm 1: COVID Arm)",]
+ds12 <- ds12 %>%
+    rename(SubjectID=Subject.ID) %>%
+    mutate(infected_household=ifelse(ds12$`Is.this.subject..considered.a.secondary.case.that.was.infected.at.baseline?`=="Yes"|ds12$`Does.this.subject.represent.a.NEW.secondary.case.based.on.PCR.or.Ab.testing?`=="Yes",1,2)) %>% 
+    mutate(household_infected_at_baseline=ifelse(ds12$`Is.this.subject..considered.a.secondary.case.that.was.infected.at.baseline?`=="Yes",1,ifelse(ds12$`Does.this.subject.represent.a.NEW.secondary.case.based.on.PCR.or.Ab.testing?`=="Yes",2,NA)))
+
+ds12$household <- substring(ds12$SubjectID,regexpr("V",ds12$SubjectID)+1,10)
+
+ds12$dropout <- ifelse(ds12$SubjectID=="UNC-COV007-001"|ds12$SubjectID=="UNC-COV007-004"|ds12$SubjectID=="UNC-COV007-007"|ds12$SubjectID=="UNC-COV007-002"|ds12$SubjectID=="UNC-COV007-003"|ds12$SubjectID=="UNC-COV007-005",1,0)
+
+ds12 <- filter(ds12,dropout==0)
+ds12$infectedbi <- factor(ds12$infected_household,levels = 1:2,labels = c("event","noevent"))
+ds12$infectedbi <- relevel(ds12$infectedbi,"noevent")
+table(ds12$infectedbi)
+
+table(ds12$Race)
+table(ds12$household_infected_at_baseline)
+table(ds12$Ethnicity, ds12$infected_household)
+
+ds12$Race[ds12$Ethnicity=="Hispanic or Latino"]="Hispanic or Latino"
+
+ ds12$racebi182 <- ifelse(ds12$Race=="White or Caucasian",1,ifelse(ds12$Race=="Unknown",NA,0))
+ table(ds12$racebi182)
+ 
+ mrace182 <- glmer(infectedbi ~ racebi182 + (1|household), data = ds12, family = "binomial")
+ coef(summary(mrace182))
+#  ds12$household
+#  106/176
+#  wilson.ci(106,176)
+ 
+ 
+```
+```{r merge}
+getwd()
+ds9 <- read.csv("IndexRF_data_2.csv",sep = ',', stringsAsFactors = FALSE)
+ds8 <- rename(ds9,SubjectID=Subject.ID.)
+ds8$Arm2=rep(0,200)
+ds8$Arm2[ds8$Event.Name=="Day 1 (Arm 2: COVID-HC Arm)"]=1
+ds8$Event.Name[ds8$Event.Name=="Day 1 (Arm 2: COVID-HC Arm)"]="Day 1 (Arm 1: COVID Arm)"
+ds8$Event.Name[ds8$Event.Name=="Day 28 (Arm 2: COVID-HC Arm)"]="Day 28 (Arm 1: COVID Arm)"
+ds8$ELISA..IgG..Reading.[ds8$Event.Name=="Day 1 (Arm 1: COVID Arm)"]=
+ds8$ELISA..IgG..Reading.[ds8$Event.Name=="Day 28 (Arm 1: COVID Arm)"]
+ds8$IgG.band.[ds8$Event.Name=="Day 1 (Arm 1: COVID Arm)"]=
+ds8$IgG.band.[ds8$Event.Name=="Day 28 (Arm 1: COVID Arm)"]
+ds8$Symptom.Duration.[ds8$Event.Name=="Day 1 (Arm 1: COVID Arm)"]=
+ds8$Symptom.Duration.[ds8$Event.Name=="Day 28 (Arm 1: COVID Arm)"]
+ds8$Rapid.Antibody.Test.Results.[ds8$Event.Name=="Day 1 (Arm 1: COVID Arm)"]=
+ds8$Rapid.Antibody.Test.Results.[ds8$Event.Name=="Day 28 (Arm 1: COVID Arm)"]
+# ds8$ELISA..IgG..Reading.[ds8$Event.Name=="Day 1 (Arm 1: COVID Arm)"]=
+# ds8$ELISA..IgG..Reading.[ds8$Event.Name=="Day 28 (Arm 1: COVID Arm)"]
+# ds8$IgG.band.[ds8$Event.Name=="Day 1 (Arm 1: COVID Arm)"]=
+# ds8$IgG.band.[ds8$Event.Name=="Day 28 (Arm 1: COVID Arm)"]
+
+
+ds7 <- ds8[ds8$Event.Name=="Day 1 (Arm 1: COVID Arm)",]
+ds7$BMI[ds7$Arm2==1]=ds7$BMI.1[ds7$Arm2==1]
+ds7$Diabetes[ds7$Arm2==1]=ds7$Diabetes.1[ds7$Arm2==1]
+ds7$Highest.education.level..select.one..[ds7$Arm2==1]=ds7$Highest.education.level..select.one...1[ds7$Arm2==1]
+ds7$Occupation..please.be.as.specific.as.possible..[ds7$Arm2==1]=ds7$Occupation..please.be.as.specific.as.possible...1[ds7$Arm2==1]
+
+ds7 <- select(ds7,-c(9:12))
+ds6 <- merge(x = ds3, y = ds7, by = "SubjectID", all.x = TRUE)
+
+ds6[ds6==""] <- NA
+
+```
+
+```{r percentage}
+ds7$household <- substring(ds7$SubjectID,regexpr("V",ds7$SubjectID)+1,10)
+ds7$household
+
+ds30left <- select(ds7,SubjectID,household,"reported_number"=How.many.people.are.in.your.household.live.with.you..including.yourself..) 
+
+sum(ds30left$reported_number)
+
+ds30right <- select(ds12,SubjectID,household)
+ds30right <- ds30right %>% mutate("reported_number"=NA)
+
+ds30 <- rbind(ds30left,ds30right)
+
+
+ds30 <- ds30 %>% 
+  group_by(household) %>% 
+  mutate(n=n())
+sum(ds30$reported_number==ds30$n,na.rm = T)
+
+a <- ds12 %>% 
+  group_by(household) %>% 
+  summarise(number_infected=sum(infected_household==1))
+table(a$number_infected)
+```
+

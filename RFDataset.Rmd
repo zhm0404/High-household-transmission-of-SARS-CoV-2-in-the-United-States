@@ -1,0 +1,903 @@
+---
+title: "RFDataset"
+author: "Haoming"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen = 999)
+library(dplyr)
+library(readxl)
+library(stringr)
+library(gmodels)
+library(tidyr)
+
+library(stats)
+library(lme4)
+library(lmtest)
+
+library(scales)
+library(tidyverse)
+library(grid)
+
+
+library(fastR2)
+setwd("/Users/zhm/R/CoHOST")
+```
+
+## Read Index Data
+```{r index, warning=FALSE}
+ds <- read_xlsx("IndexRF_data_forHaoming.xlsx")
+ds1 <- ds[,-c(16,17)]
+
+names(ds1)<-str_replace_all(names(ds1), c(" " = "_", ":"=""))
+ds2 <- rename(ds1,SubjectID=Subject_ID...1)
+
+ds2 <- as.data.frame(ds2)
+ds3 <- ds2[!ds2$infected_household=="excluded",]
+sum(ds3$infected_household==0)
+
+ds3$household_infected_at_baseline[ds3$household_with_new_secondary_case==1]=2
+ds3$Ethnicity[ds3$SubjectID=="UNC-COV073"]="Hispanic or Latino"
+
+ds3$infected_household[ds3$infected_household==0]=2
+ds3$boxcolumn <- ifelse(ds3$infected_household==2,"No secondary cases",ifelse(ds3$household_infected_at_baseline==1,"Infected cases at baseline","New secondary cases"))
+
+ds3$infectedbi <- factor(ds3$infected_household,levels = 1:2,labels = c("event","noevent"))
+ds3$infectedbi <- relevel(ds3$infectedbi,"noevent")
+```
+
+```{r merge}
+getwd()
+ds9 <- read.csv("IndexRF_data_2.csv",sep = ',', stringsAsFactors = FALSE)
+ds8 <- rename(ds9,SubjectID=Subject.ID.)
+ds8$Arm2=rep(0,200)
+ds8$Arm2[ds8$Event.Name=="Day 1 (Arm 2: COVID-HC Arm)"]=1
+ds8$Event.Name[ds8$Event.Name=="Day 1 (Arm 2: COVID-HC Arm)"]="Day 1 (Arm 1: COVID Arm)"
+ds8$Event.Name[ds8$Event.Name=="Day 28 (Arm 2: COVID-HC Arm)"]="Day 28 (Arm 1: COVID Arm)"
+ds8$ELISA..IgG..Reading.[ds8$Event.Name=="Day 1 (Arm 1: COVID Arm)"]=
+ds8$ELISA..IgG..Reading.[ds8$Event.Name=="Day 28 (Arm 1: COVID Arm)"]
+ds8$IgG.band.[ds8$Event.Name=="Day 1 (Arm 1: COVID Arm)"]=
+ds8$IgG.band.[ds8$Event.Name=="Day 28 (Arm 1: COVID Arm)"]
+ds8$Symptom.Duration.[ds8$Event.Name=="Day 1 (Arm 1: COVID Arm)"]=
+ds8$Symptom.Duration.[ds8$Event.Name=="Day 28 (Arm 1: COVID Arm)"]
+ds8$Rapid.Antibody.Test.Results.[ds8$Event.Name=="Day 1 (Arm 1: COVID Arm)"]=
+ds8$Rapid.Antibody.Test.Results.[ds8$Event.Name=="Day 28 (Arm 1: COVID Arm)"]
+# ds8$ELISA..IgG..Reading.[ds8$Event.Name=="Day 1 (Arm 1: COVID Arm)"]=
+# ds8$ELISA..IgG..Reading.[ds8$Event.Name=="Day 28 (Arm 1: COVID Arm)"]
+# ds8$IgG.band.[ds8$Event.Name=="Day 1 (Arm 1: COVID Arm)"]=
+# ds8$IgG.band.[ds8$Event.Name=="Day 28 (Arm 1: COVID Arm)"]
+
+
+ds7 <- ds8[ds8$Event.Name=="Day 1 (Arm 1: COVID Arm)",]
+ds7$BMI[ds7$Arm2==1]=ds7$BMI.1[ds7$Arm2==1]
+ds7$Diabetes[ds7$Arm2==1]=ds7$Diabetes.1[ds7$Arm2==1]
+ds7$Highest.education.level..select.one..[ds7$Arm2==1]=ds7$Highest.education.level..select.one...1[ds7$Arm2==1]
+ds7$Occupation..please.be.as.specific.as.possible..[ds7$Arm2==1]=ds7$Occupation..please.be.as.specific.as.possible...1[ds7$Arm2==1]
+
+ds7 <- select(ds7,-c(9:12))
+ds6 <- merge(x = ds3, y = ds7, by = "SubjectID", all.x = TRUE)
+
+ds6[ds6==""] <- NA
+```
+
+## read HC data 
+```{r HCsdata}
+ds11 <- read_xlsx("HCsRF_data.xlsx")
+names(ds11)<-str_replace_all(names(ds11), c(" " = ".", ":"=""))
+ds11$Arm2=rep(0,364)
+ds11$Arm2[ds11$Event.Name=="Day 1 (Arm 2: COVID-HC Arm)"]=1
+ds11$Event.Name[ds11$Event.Name=="Day 1 (Arm 2: COVID-HC Arm)"]="Day 1 (Arm 1: COVID Arm)"
+ds11$Event.Name[ds11$Event.Name=="Day 0 (Arm 2: COVID-HC Arm)"]="Day 0 (Arm 1: COVID Arm)"
+ds11$Race[ds11$Event.Name=="Day 1 (Arm 1: COVID Arm)"]=
+ds11$Race[ds11$Event.Name=="Day 0 (Arm 1: COVID Arm)"]
+ds11$Ethnicity[ds11$Event.Name=="Day 1 (Arm 1: COVID Arm)"]=
+ds11$Ethnicity[ds11$Event.Name=="Day 0 (Arm 1: COVID Arm)"]
+ds12 <- ds11[ds11$Event.Name=="Day 1 (Arm 1: COVID Arm)",]
+ds12 <- ds12 %>%
+    rename(SubjectID=Subject.ID) %>%
+    mutate(infected_household=ifelse(ds12$`Is.this.subject..considered.a.secondary.case.that.was.infected.at.baseline?`=="Yes"|ds12$`Does.this.subject.represent.a.NEW.secondary.case.based.on.PCR.or.Ab.testing?`=="Yes",1,2)) %>% 
+    mutate(household_infected_at_baseline=ifelse(ds12$`Is.this.subject..considered.a.secondary.case.that.was.infected.at.baseline?`=="Yes",1,ifelse(ds12$`Does.this.subject.represent.a.NEW.secondary.case.based.on.PCR.or.Ab.testing?`=="Yes",2,NA)))
+
+ds12$household <- substring(ds12$SubjectID,regexpr("V",ds12$SubjectID)+1,10)
+
+ds12$dropout <- ifelse(ds12$SubjectID=="UNC-COV007-001"|ds12$SubjectID=="UNC-COV007-004"|ds12$SubjectID=="UNC-COV007-007"|ds12$SubjectID=="UNC-COV020-004"|ds12$SubjectID=="UNC-COV039-001"|ds12$SubjectID=="UNC-COV045-002",1,0)
+
+ds12 <- filter(ds12,dropout==0)
+ds12$infectedbi <- factor(ds12$infected_household,levels = 1:2,labels = c("event","noevent"))
+ds12$infectedbi <- relevel(ds12$infectedbi,"noevent")
+table(ds12$infectedbi)
+# table(ds12$Race,ds12$household_infected_at_baseline)
+# table(ds12$Ethnicity, ds12$infected_household)
+# 
+# ds12$Race[ds12$Ethnicity=="Hispanic or Latino"]="Hispanic or Latino"
+# 
+# ds12$racebi182 <- ifelse(ds12$Race=="White or Caucasian",1,ifelse(ds12$Race=="Unknown",NA,0))
+# table(ds12$racebi182,ds12$household_infected_at_baseline)
+# mrace182 <- glmer(infectedbi ~ racebi182 + (1|household), data = ds12, family = "binomial")
+# coef(summary(mrace182))
+# ds12$household
+
+# ?wilson.ci
+# wilson.ci(56,79,conf.level = 0.95)
+```
+
+## Total data
+```{r}
+ds6$household <- substring(ds6$SubjectID,regexpr("V",ds6$SubjectID)+1,10)
+ds6$household
+ds30left <- select(ds6,SubjectID,household,"reported_number"=How.many.people.are.in.your.household.live.with.you..including.yourself..) 
+ds30right <- select(ds12,SubjectID,household)
+ds30right <- ds30right %>% mutate("reported_number"=NA)
+
+ds30 <- rbind(ds30left,ds30right)
+
+
+ds30 <- ds30 %>% 
+  group_by(household) %>% 
+  mutate(n=n())
+sum(ds30$reported_number==ds30$n,na.rm = T)
+53/92
+# ds30 <- ds30 %>% 
+#   group_by(household) %>% 
+#   mutate(new=reported_number[which(!is.na(reported_number))])
+
+
+ds12 %>% 
+    group_by(household) %>% 
+  mutate(n=n())
+```
+
+
+
+## Index Age
+```{r Index Age}
+ds3$Agecat <- cut(ds3$Age,c(0,17,50,120))
+
+CrossTable(ds3$Agecat,ds3$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds3$Agecat,ds3$household_infected_at_baseline,prop.r = F,prop.t = F, prop.chisq = F)
+
+
+ds3$agebi1=ifelse(ds3$Age<18,1,0)
+ds3$agebi2=ifelse(18<=ds3$Age&ds3$Age<=50,1,0)
+ds3$agebi3=ifelse(ds3$Age>50,1,0)
+
+miage <- glm(infectedbi ~ agebi3, data = ds3, family = binomial)
+coef(summary(miage))
+```
+
+## Index Sex
+```{r Index Sex}
+CrossTable(ds3$Sex,ds3$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds3$Sex,ds3$household_infected_at_baseline,prop.t = F,prop.r = F,prop.chisq = F)
+
+ds3$Sex
+misex <- glm(infectedbi ~ Sex, data = ds3, family = binomial)
+coef(summary(misex))
+```
+## Index Mask_wearing
+```{r Index Mask_wearing}
+CrossTable(ds3$mask_inside_home, ds3$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds3$mask_inside_home, ds3$household_infected_at_baseline, prop.t = F,prop.r = F,prop.chisq = F)
+
+mihomemask <- glm(infectedbi ~ mask_inside_home, data = ds3, family = binomial)
+coef(summary(mihomemask))
+```
+
+## Index Race/ethnicity
+```{r Index Race/ethnicity}
+ds3$Race[ds3$Ethnicity=="Hispanic or Latino"] <- ds3$Ethnicity[ds3$Ethnicity=="Hispanic or Latino"]
+
+CrossTable(ds3$Race, ds3$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds3$Race, ds3$household_infected_at_baseline, prop.t = F,prop.r = F,prop.chisq = F)
+CrossTable(ds3$Ethnicity, ds3$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds3$Ethnicity, ds3$household_infected_at_baseline, prop.t = F,prop.r = F,prop.chisq = F)
+
+
+ds3$whitebi=ifelse(ds3$Race=="White or Caucasian",1,0)
+ds3$blackbi=ifelse(ds3$Race=="Black or African American",1,0)
+ds3$latinobi=ifelse(ds3$Ethnicity=="Hispanic or Latino",1,0)
+ds3$otherracebi=ifelse(ds3$Race!="White or Caucasian"&ds3$Race!="Black or African American"&ds3$Race!="Hispanic or Latino",1,0)
+
+mirace <- glm(infectedbi ~ latinobi, data = ds3, family = binomial)
+coef(summary(mirace))
+```
+
+## Index Viral_load
+```{r Index Viral_load}
+ds3$NPcat <- cut(ds3$D1_NP,c(-1,1000000,1000000000),labels = c(0,1))
+
+CrossTable(ds3$NPcat, ds3$infected_household,prop.t = F,prop.chisq = F,fisher = T)
+CrossTable(ds3$NPcat, ds3$household_infected_at_baseline, prop.t = F,prop.r = F,prop.chisq = F)
+
+mivl <- glm(infectedbi ~ NPcat, data = ds3, family = "binomial")
+coef(summary(mivl))
+exp(0.63908+1.96*0.5760825)
+
+
+median(ds3$D1_NP[ds3$household_infected_at_baseline==1],na.rm = T)
+median(ds3$D1_NP[ds3$household_infected_at_baseline==2],na.rm = T)
+median(ds3$D1_NP[ds3$infected_household==1],na.rm = T)
+median(ds3$D1_NP[ds3$infected_household==2],na.rm = T)
+
+log10(median(ds3$D1_NP[ds3$household_infected_at_baseline==2],na.rm = T))/log10(median(ds3$D1_NP[ds3$infected_household==2],na.rm = T))
+# ds4 <- ds3[!(ds3$Rapid_Antibody_Test_Results=="Positive"),]
+# ds4$NPcat <- cut(ds4$D1_NP,c(-1,1000000,1000000000),labels = c(0,1))
+# 
+# CrossTable(ds4$NPcat, ds4$infected_household,prop.t = F,prop.chisq = F)
+# CrossTable(ds4$NPcat, ds4$household_infected_at_baseline, prop.t = F,prop.r = F,prop.chisq = F)
+
+ds6$NPcat <- cut(ds6$D1_NP,c(-1,1000000,1000000000),labels = c(0,1))
+ExcludeD1Ab_ds6 <- filter(ds6,ds6$ELISA..IgG..Reading.=="Equivocal"|ds6$ELISA..IgG..Reading.=="Negative"|(is.na(ds6$ELISA..IgG..Reading.)&is.na(ds6$IgG.band.)))
+
+
+CrossTable(ExcludeD1Ab_ds6$NPcat, ExcludeD1Ab_ds6$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ExcludeD1Ab_ds6$NPcat, ExcludeD1Ab_ds6$household_infected_at_baseline, prop.t = F,prop.r = F,prop.chisq = F)
+
+# ExcludeD1Ab_ds6[ExcludeD1Ab_ds6$infected_household==0&!is.na(ExcludeD1Ab_ds6$D1_NP),]
+
+
+ds3$D7_NMTcat=cut(ds3$D7_NMT,c(-1,9,100000000))
+CrossTable(ds3$D7_NMTcat, ds3$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds3$D7_NMTcat, ds3$household_infected_at_baseline, prop.t = F,prop.r = F,prop.chisq = F)
+
+
+ds6$Abpositive = ifelse(is.na(ds6$ELISA..IgG..Reading.)&is.na(ds6$IgG.band.),0,ifelse(ds6$ELISA..IgG..Reading.=="Positive"|(is.na(ds6$ELISA..IgG..Reading.)&!is.na(ds6$IgG.band.)),1,0))
+
+dstest <- select(ds6,ELISA..IgG..Reading.,IgG.band.,Abpositive)
+table(ds6$Abpositive)
+
+dsbasevsun<- filter(ds6,ds6$household_infected_at_baseline!=2|is.na(ds6$household_infected_at_baseline))
+dsbasevsun$household_infected_at_baseline[is.na(dsbasevsun$household_infected_at_baseline)]=0
+dsbasevsun$household_infected_at_baseline
+miabpositive<- glm(household_infected_at_baseline ~ Abpositive, data=dsbasevsun, family = "binomial" )
+coef(summary(miabpositive))
+table(dsbasevsun$Abpositive,dsbasevsun$household_infected_at_baseline)
+```
+
+## ggplot
+```{r plot}
+# + coord_cartesian(ylim = c(0,1e8))
+ds6$Abpositive = ifelse(is.na(ds6$ELISA..IgG..Reading.)&is.na(ds6$IgG.band.),2,ifelse(ds6$ELISA..IgG..Reading.=="Positive"|(is.na(ds6$ELISA..IgG..Reading.)&!is.na(ds6$IgG.band.)),1,2))
+
+dstest <- select(ds6,ELISA..IgG..Reading.,IgG.band.,ExcludeAb)
+table(ds6$Abpositive)
+
+
+ds21 <- ds6[which(ds6$Abpositive==2),]
+ds21$Abpositive = replicate(length(ds21$Abpositive),1)
+
+ds22 <- rbind(ds21,ds6)
+table(ds22$Abpositive)
+
+options(scipen=2)
+
+fci <- function(x) {
+  ans <- boxplot.stats(x)
+  data.frame(ymin = ans$conf[1], ymax = ans$conf[2], y = ans$stats[3])
+}
+
+exp_bold <- function(x) {
+  lab <- lapply(x, function(x) log10(x))
+  
+  ans <- do.call(
+    expression,
+   lapply(paste(lab), function(x) bquote(bold("10"^.(x))))
+  )
+  for( i in (1:length(ans))){ 
+         if(i%%2==1) ans[i] = ""
+  }
+  ans
+}
+
+ ggplot(data=ds22,aes(x=boxcolumn,y=D1_NP,fill=factor(Abpositive))) + 
+  geom_boxplot(aes(x=boxcolumn,y=D1_NP), width=0.8) + 
+  xlab("Households") + ylab("Index NP viral load at baseline (copies/ul)") + 
+  theme_classic()+ggtitle("") +
+  scale_x_discrete( labels=function(x) str_wrap(x, width=15) )+
+  scale_y_log10( breaks = trans_breaks("log10", function(x) 10^x)) 
+ 
+ ggplot(data=ds22,aes(x=boxcolumn,y=D1_NP,fill=factor(Abpositive))) + 
+  geom_boxplot(aes(x=boxcolumn,y=D1_NP), width=0.8) + 
+  xlab("Households") + ylab("Index NP viral load at baseline (copies/ul)") + 
+  theme_classic()+ggtitle("") +
+  scale_fill_manual(name = "", labels = c("Including Ab+", "Excluding Ab+"),values = c("white","gray"))+
+  scale_x_discrete( labels=function(x) str_wrap(x, width=15) )+
+  scale_y_continuous(trans = log10_trans(), breaks = trans_breaks("log10", function(x) 10^x,n=10),
+              labels = function(x) exp_bold(x),limits = c(1,1e9)) +
+  stat_summary(width=0.8,aes(x=boxcolumn,y=D1_NP,group=factor(Abpositive)), fun.data = fci, geom = "crossbar", 
+    color="skyblue", fill= "lightblue",alpha = 0.5,position = position_dodge(width = .8)) +
+   
+  theme( plot.title = element_text(face="bold",size =14,vjust = 2),
+        axis.text.x = element_text(face="bold", color="#000000", 
+                           size=12, angle=0, vjust= 1),
+        axis.title.y = element_text(face="bold",size =14,vjust=5),
+        axis.title.x = element_text(face="bold",size =15,vjust = 0),
+          axis.text.y = element_text(face="bold", color="#000000", 
+                           size=14, angle=0,hjust=-0.3),
+    axis.ticks.length.y = unit(.25, "cm"),
+    axis.ticks.length.x = unit(.25, "cm"),
+    legend.title = element_blank(),
+    legend.text = element_text(face="bold",size =12),
+    legend.key = element_rect(colour = "transparent", fill = "transparent"),
+    legend.position = c(0.8, 0.1),
+      plot.margin = margin(0.2, 0.2, 0.2, 0.5, "cm")
+      ) +
+  geom_jitter(data= subset(ds22,D1_NP>0),aes(boxcolumn,D1_NP),shape=16, position=position_dodge(width = 0.8))
+
+
+?trans_breaks
+# ggplot(data=ds22,aes(x=boxcolumn,y=D1_NP)) +
+#   geom_boxplot(aes(x=boxcolumn,y=D1_NP), width=0.8) +
+#   xlab("Households") + ylab("Index NP Viral Load at Baseline (copies/ul)") +
+#   theme_classic()+ggtitle("") +
+#   scale_fill_manual(name = "", labels = c("Excluding Ab+", "Not Excluding Ab+"),values = c("darkgray","lightgray"))+
+#   scale_x_discrete( labels=function(x) str_wrap(x, width=15) )+
+#   scale_y_continuous(trans = log10_trans(), breaks = trans_breaks("log10", function(x) 10^x,n=9),
+#               labels = function(x) exp_bold(x),limits = c(1,1e8)) +
+#   stat_summary(width=0.8,aes(x=boxcolumn,y=D1_NP,fill=factor(ExcludeAb)), fun.data = fci, geom = "crossbar",
+#     color = "skyblue", fill= "lightblue",alpha = 0.5,position = position_dodge(width = .8)) +
+#   theme( plot.title = element_text(face="bold",size =14,vjust = 2),
+#         axis.text.x = element_text(face="bold", color="#000000",
+#                            size=8, angle=0, vjust= 1),
+#         axis.title.y = element_text(face="bold",size =14),
+#         axis.title.x = element_text(face="bold",size =14,vjust = -1),
+#           axis.text.y = element_text(face="bold", color="#000000",
+#                            size=12, angle=0),
+#     axis.ticks.length.y = unit(.25, "cm"),
+#     axis.ticks.length.x = unit(.25, "cm"),
+#     legend.title = element_blank(),
+#     legend.text = element_text(face="bold",size =10),
+#     legend.key = element_rect(colour = "transparent", fill = "transparent"),
+#     legend.position = c(0.8, 0.1)) +
+# 
+#   geom_jitter(data= subset(ds22,D1_NP>0),aes(boxcolumn,D1_NP),shape=16, position=position_dodge(width = 0.8)) +
+#   facet_wrap(~ExcludeAb)
+
+# box1 <- ggplot(data=ds3) + 
+#   geom_boxplot(aes(x=boxcolumn,y=D1_NP), width=0.8) + 
+#   xlab("Infection Status") + ylab("NP Viral Load at Baseline (copies/ul)") + 
+#   theme_classic()+ggtitle("Index NP Viral Load at Baseline") + 
+#   scale_x_discrete( labels=function(x) str_wrap(x, width=15) )+
+#   scale_y_continuous(trans = log10_trans(), breaks = trans_breaks("log10", function(x) 10^x),
+#               labels =exp_bold) +
+#   stat_summary(aes(x=boxcolumn,y=D1_NP), fun.data = fci, geom = "crossbar", 
+#     colour = NA, fill = "skyblue", width = 0.8, alpha = 0.5) +
+#   
+#   theme( plot.title = element_text(face="bold",size =14,vjust = 2),
+#         axis.text.x = element_text(face="bold", color="#000000", 
+#                            size=12, angle=0, vjust= -2),
+#         axis.title.y = element_text(face="bold",size =14),
+#           axis.text.y = element_text(face="bold", color="#000000", 
+#                            size=12, angle=0),
+#     axis.ticks.length.y = unit(.25, "cm"),
+#     axis.ticks.length.x = unit(.25, "cm")) +
+#   xlab("") +
+#   geom_jitter(aes(boxcolumn,D1_NP),shape=16, position=position_jitter(0.1))
+# 
+# 
+# violin1 <- ggplot(data=ds3, aes(x=boxcolumn,y=D1_NP,fill=boxcolumn)) + 
+#   geom_violin(aes(x=boxcolumn,y=D1_NP),alpha=0.4) +
+#   geom_boxplot(aes(x=boxcolumn,y=D1_NP), width=0.3,alpha=0.3) + 
+#   xlab("Infection Status") + ylab("NP Viral Load at Baseline (copies/ul)") + 
+#   theme_classic()+ggtitle("Index NP Viral Load at Baseline") + 
+#   scale_x_discrete( labels=function(x) str_wrap(x, width=15) )+
+#   scale_y_continuous(trans = log10_trans(), breaks = trans_breaks("log10", function(x) 10^x),
+#               labels =exp_bold) +
+#   stat_summary(aes(x=boxcolumn,y=D1_NP), fun.data = fci, geom = "crossbar", 
+#     colour = NA, fill = "skyblue", width = 0.3, alpha = 0.8) +
+#   
+#   theme( plot.title = element_text(face="bold",size =14,vjust = 2),
+#         axis.text.x = element_text(face="bold", color="#000000", 
+#                            size=12, angle=0, vjust= -2),
+#         axis.title.y = element_text(face="bold",size =14),
+#           axis.text.y = element_text(face="bold", color="#000000", 
+#                            size=12, angle=0),
+#     axis.ticks.length.y = unit(.25, "cm"),
+#     axis.ticks.length.x = unit(.25, "cm"),
+#     legend.position = "none") +
+#   xlab("") +
+#   geom_jitter(aes(boxcolumn,D1_NP),shape=16, position=position_jitter(0.1)) +
+#   scale_fill_grey()
+# violin1
+# 
+# g1 <- ggplotGrob(box1)
+# g2 <- ggplotGrob(violin1)
+# g3 <- cbind(g1, g2, size = "first")
+# grid.newpage()
+#   grid.draw(g3)
+# 
+# # coord_trans()
+# 
+# box2 <- ggplot(data=ExcludeD1Ab_ds6) + 
+#   geom_boxplot(aes(x=boxcolumn,y=D1_NP), width=0.8) + 
+#   xlab("Infection Status") + ylab("NP Viral Load at Baseline (copies/ul)") + 
+#   theme_classic()+ggtitle("Index NP Viral Load at Baseline") + 
+#   scale_x_discrete( labels=function(x) str_wrap(x, width=15) )+
+#   scale_y_continuous(trans = log10_trans(), breaks = trans_breaks("log10", function(x) 10^x),
+#               labels =exp_bold) +
+#   stat_summary(aes(x=boxcolumn,y=D1_NP), fun.data = fci, geom = "crossbar", 
+#     colour = NA, fill = "skyblue", width = 0.8, alpha = 0.5) +
+#   
+#   theme( plot.title = element_text(face="bold",size =14,vjust = 2),
+#         axis.text.x = element_text(face="bold", color="#000000", 
+#                            size=12, angle=0, vjust= -2),
+#         axis.title.y = element_text(face="bold",size =14),
+#           axis.text.y = element_text(face="bold", color="#000000", 
+#                            size=12, angle=0),
+#     axis.ticks.length.y = unit(.25, "cm"),
+#     axis.ticks.length.x = unit(.25, "cm")) +
+#   xlab("") +
+#   geom_jitter(aes(boxcolumn,D1_NP),shape=16, position=position_jitter(0.1))
+# box2
+# 
+# violin2 <- ggplot(data=ExcludeD1Ab_ds6, aes(x=boxcolumn,y=D1_NP,fill=boxcolumn)) + 
+#   geom_violin(aes(x=boxcolumn,y=D1_NP),alpha=0.4) +
+#   geom_boxplot(aes(x=boxcolumn,y=D1_NP), width=0.3,alpha=0.3) + 
+#   xlab("Infection Status") + ylab("NP Viral Load at Baseline (copies/ul)") + 
+#   theme_classic()+ggtitle("Index NP Viral Load at Baseline") + 
+#   scale_x_discrete( labels=function(x) str_wrap(x, width=15) )+
+#   scale_y_continuous(trans = log10_trans(), breaks = trans_breaks("log10", function(x) 10^x),
+#               labels =exp_bold) +
+#   stat_summary(aes(x=boxcolumn,y=D1_NP), fun.data = fci, geom = "crossbar", 
+#     colour = NA, fill = "skyblue", width = 0.3, alpha = 0.8) +
+#   
+#   theme( plot.title = element_text(face="bold",size =14,vjust = 2),
+#         axis.text.x = element_text(face="bold", color="#000000", 
+#                            size=12, angle=0, vjust= -2),
+#         axis.title.y = element_text(face="bold",size =14),
+#           axis.text.y = element_text(face="bold", color="#000000", 
+#                            size=12, angle=0),
+#     axis.ticks.length.y = unit(.25, "cm"),
+#     axis.ticks.length.x = unit(.25, "cm"),
+#     legend.position = "none") +
+#   xlab("") +
+#   geom_jitter(aes(boxcolumn,D1_NP),shape=16, position=position_jitter(0.1)) +
+#   scale_fill_grey()
+# violin2
+# g4 <- ggplotGrob(box2)
+# g5 <- ggplotGrob(violin2)
+# g6 <- cbind(g4, g5, size = "first")
+# grid.newpage()
+#   grid.draw(g6)
+  
+
+```
+## Index Symptom_Severity
+```{r Index Symptom_severity}
+
+CrossTable(ds3$sx_severity, ds3$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds3$sx_severity, ds3$household_infected_at_baseline, prop.t = F,prop.r = F,prop.chisq = F)
+
+ds3$mildbi <- ifelse(ds3$sx_severity==2,1,0)
+ds3$modsevbi <- ifelse(ds3$sx_severity==11,1,0)
+ds3$hospitalbi <- ifelse(ds3$sx_severity==12,1,0)
+
+miseverity <- glm(infectedbi ~ hospitalbi, data = ds3, family = binomial)
+coef(summary(miseverity))
+```
+
+
+
+## Index Comorbidities Education Healthcare_worker
+```{r Index Comorbidities}
+CrossTable(ds6$Diabetes, ds6$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds6$Diabetes, ds6$household_infected_at_baseline, prop.t = F,prop.r = F,prop.chisq = F)
+
+midiabetes <- glm(infectedbi ~ Diabetes, data = ds6, family = binomial)
+coef(summary(midiabetes))
+
+ds6$BMIcat=cut(ds6$BMI,c(0,29.5,100))
+CrossTable(ds6$BMIcat, ds6$infected_household,prop.t = F,prop.chisq = F)
+
+miobesity <- glm(infectedbi ~ BMIcat, data = ds6, family = binomial)
+coef(summary(miobesity))
+
+CrossTable(ds6$Highest.education.level..select.one.., ds6$infected_household,prop.t = F,prop.chisq = F)
+table(ds6$Highest.education.level..select.one..)
+ds6$edubi1 <- ifelse(ds6$Highest.education.level..select.one..=="High school or lower", 1,0)
+ds6$edubi2 <- ifelse(ds6$Highest.education.level..select.one..=="College degree", 1,0)
+ds6$edubi3 <- ifelse(ds6$Highest.education.level..select.one..=="Graduate degree", 1,0)
+
+miedu <- glm(infectedbi ~ edubi3, data = ds6, family = binomial)
+coef(summary(miedu))
+
+ds10 <- select(ds6,SubjectID,Occupation..please.be.as.specific.as.possible..,infectedbi)
+
+ds10$healthcareworker[ds10$SubjectID=="UNC-COV092"] = 1
+table(ds10$healthcareworker,ds10$infectedbi)
+ds10$healthcareworker[is.na(ds10$healthcareworker)] = 0
+mihealthcare <- glm(infectedbi ~ healthcareworker, data = ds10, family= "binomial")
+coef(summary(mihealthcare))
+```
+
+## Index igG
+```{r Index igG}
+
+
+
+dsigg <- ds6 %>% 
+    mutate(igg = ifelse((ELISA..IgG..Reading.=="Positive")|(is.na(ELISA..IgG..Reading.)&!is.na(IgG.band.)),"Positive",NA))
+table(dsigg$igg)
+dsigg$igg[dsigg$ELISA..IgG..Reading.=="Negative"|is.na(dsigg$ELISA..IgG..Reading.)&is.na(dsigg$IgG.band.)&(dsigg$Rapid_Antibody_Test_Results!="Rapid Ab Test Not Taken")]="Negative"
+dsigg$igg[dsigg$ELISA..IgG..Reading.=="Equivocal"]="Equivocal"
+CrossTable(dsigg$igg, dsigg$infected_household,prop.t = F,prop.chisq = F)
+
+dsigg$pbi <- ifelse(dsigg$igg=="Positive",1,0)
+dsigg$nbi <- ifelse(dsigg$igg=="Negative",1,0)
+miigg <- glm( infectedbi ~ nbi, data=dsigg, family = "binomial")
+coef(summary(miigg))
+
+```
+
+## Index Duration
+```{r Index Duration}
+CrossTable(ds6$Symptom.Duration.,ds6$infected_household,prop.t=F,prop.chisq=F)
+quantile(ds6$Symptom.Duration.[ds6$infected_household==1],na.rm = T)
+
+ds6$Symptom.Duration.[ds6$infected_household==1]
+```
+
+## Household Table
+```{r Household Table}
+mean(ds6$How.many.people.are.in.your.household.live.with.you..including.yourself..)
+t.test(ds6$How.many.people.are.in.your.household.live.with.you..including.yourself..[ds6$infected_household==1], ds6$How.many.people.are.in.your.household.live.with.you..including.yourself..[ds6$infected_household==2],
+       alternative = "two.sided",
+       mu = 0, paired = FALSE, var.equal = FALSE,
+       conf.level = 0.95,)
+
+CrossTable(ds6$Approximately.how.many.square.feet.is.your.home..living.space..,ds6$infected_household,prop.t=F,prop.chisq=F)
+
+ds6$spacecat=ifelse(ds6$Approximately.how.many.square.feet.is.your.home..living.space..==">2000 sq feet (>186 sq m)", ">2000",ifelse(ds6$Approximately.how.many.square.feet.is.your.home..living.space..=="Not sure",NA,"<2000"))
+table(ds6$spacecat)
+
+mispace <- glm( infectedbi ~ spacecat, data=ds6, family = "binomial")
+coef(summary(mispace))
+
+CrossTable(ds6$How.many.rooms.does.your.household.occupy..include.bedrooms..kitchen..common.rooms..but.not.bathrooms.or.garage..,ds6$infected_household,prop.t=F,prop.chisq=F, fisher = T)
+
+miroomnumber <- glm( infectedbi ~ How.many.rooms.does.your.household.occupy..include.bedrooms..kitchen..common.rooms..but.not.bathrooms.or.garage.., data=ds6, family = "binomial")
+coef(summary(miroomnumber))
+
+mi0 <- glm (infectedbi ~ 1 , data=ds6, family = "binomial")
+coef(summary(mi0))
+
+lrtest(miroomnumber,mi0)
+
+ds6$density=ifelse(ds6$How.many.rooms.does.your.household.occupy..include.bedrooms..kitchen..common.rooms..but.not.bathrooms.or.garage..!="6 or more rooms"&ds6$How.many.people.are.in.your.household.live.with.you..including.yourself..>3,1,0)
+
+
+CrossTable(ds6$density,ds6$infectedbi,prop.t=F,prop.chisq=F, fisher = T)
+20/22
+wilson.ci(20,22,conf.level = 0.95)
+midensity <- glm (infectedbi ~ density , data=ds6, family = "binomial")
+coef(summary(midensity))
+exp(1.7765)
+
+CrossTable(ds6$Household.type.,ds6$infected_household,prop.t=F,prop.chisq=F)
+
+ds6$Household.type.[ds6$Household.type.=="Other"] <- NA
+ds6$Household.type.bi1=ifelse(ds6$Household.type.=="Apartment occupied by renter",1,0)
+ds6$Household.type.bi2=ifelse(ds6$Household.type.=="Single-family home or townhome occupied by owner",1,0)
+ds6$Household.type.bi3=ifelse(ds6$Household.type.=="Single-family home or townhome occupied by renter",1,0)
+
+miownership <- glm (infectedbi ~ Household.type.bi3 , data=ds6, family = "binomial")
+coef(summary(miownership))
+
+
+
+
+```
+
+## Race*density
+```{r Race*density}
+ds31 <- ds6
+ds31$Race[ds31$Ethnicity=="Hispanic or Latino"]=ds31$Ethnicity[ds31$Ethnicity=="Hispanic or Latino"]
+table(ds31$Race,ds31$density)
+table(ds6$Race)
+
+
+```
+
+## P value
+```{r Fishers Exact Test}
+x=5
+y=8
+a <- matrix(c(x,y,64-x,28-y),nrow = 2)
+fisher.test(a)
+
+
+library(vcdExtra)
+Input =(
+"Infected       Yes        No
+Hours
+le3         11          2
+4-6         14          15
+gt6         71          45
+")
+
+Tabla = as.table(read.ftable(textConnection(Input)))
+
+
+Tabla
+sum (Tabla)
+
+prop.table(Tabla,
+           margin = NULL)
+
+
+CMHtest(Tabla, strata = NULL, 
+   rscores = "midrank", cscores = "midrank", 
+   types = c("cor", "rmeans", "cmeans", "general"), 
+   overall=FALSE)
+```
+
+
+
+
+
+##################################################################################################
+                                            HC Data
+##################################################################################################
+  
+
+
+
+## HC Relationship
+```{r HC Relationship}
+CrossTable(ds12$`What.is.your.relationship.to.the.COV-positive.contact.person?.I.am.their`,ds12$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds12$`What.is.your.relationship.to.the.COV-positive.contact.person?.I.am.their`,ds12$household_infected_at_baseline,prop.r = F,prop.t = F, prop.chisq = F)
+
+CrossTable(ds12$`Are.you.acting.as.a.primary.caregiver.to.the.COV-positive.person?`,ds12$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds12$`Are.you.acting.as.a.primary.caregiver.to.the.COV-positive.person?`,ds12$household_infected_at_baseline,prop.r = F,prop.t = F, prop.chisq = F)
+
+```
+
+
+## HC Age
+```{r HC Age}
+ds12$Agecat <- cut(ds12$Age,c(0,10,17,50,120))
+
+CrossTable(ds12$Agecat,ds12$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds12$Agecat,ds12$household_infected_at_baseline,prop.r = F,prop.t = F, prop.chisq = F)
+```
+
+
+## HC Sex
+```{r HC Sex}
+CrossTable(ds12$Sex,ds12$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds12$Sex,ds12$household_infected_at_baseline,prop.r = F,prop.t = F, prop.chisq = F)
+```
+
+
+
+## HC Shared activities prior to enrollment
+```{r HC Shared activities prior to enrollment}
+names(ds12)[15:27] <- names(ds12)[15:27] %>% 
+  substring(regexpr("=",names(ds12)[15:27])+1) %>% 
+  str_replace_all(c("\\)"=" ","\\("=" "))
+
+CrossTable(ds12$`Same.bed.for.sleeping `,ds12$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds12$`Same.bed.for.sleeping `,ds12$household_infected_at_baseline,prop.r = F,prop.t = F, prop.chisq = F)
+
+CrossTable(ds12$`Same.room.for.sleeping `,ds12$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds12$`Same.room.for.sleeping `,ds12$household_infected_at_baseline,prop.r = F,prop.t = F, prop.chisq = F)
+
+ds12 <- ds12 %>% mutate(Same.bathroom=(ds12$`Same.bedroom.bathroom `=="Checked"|ds12$`Same.general.bathroom `=="Checked"))
+CrossTable(ds12$Same.bathroom,ds12$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds12$Same.bathroom,ds12$household_infected_at_baseline,prop.r = F,prop.t = F, prop.chisq = F)
+
+CrossTable(ds12$`Meals.eaten.together.at.the.dinner.table `,ds12$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds12$`Meals.eaten.together.at.the.dinner.table `,ds12$household_infected_at_baseline,prop.r = F,prop.t = F, prop.chisq = F)
+
+CrossTable(ds12$`Shared.car.rides `,ds12$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds12$`Shared.car.rides `,ds12$household_infected_at_baseline,prop.r = F,prop.t = F, prop.chisq = F)
+
+```
+
+## HC Mask wearing
+```{r HC Mask_wearing}
+# ds12$Mask_how_often=ifelse(ds12$`How.often.do.you.wear.the.mask?.(check.all.that.apply).(choice=Most.of.the.day)`=="Checked"|ds12$`When.do.you.wear.the.mask?.(check.all.that.apply).(choice=Most.of.the.day)`=="Checked","Most_of_the_day",
+#     ifelse(ds12$`How.often.do.you.wear.the.mask?.(check.all.that.apply).(choice=Sometimes)`=="Checked"|ds12$`When.do.you.wear.the.mask?.(check.all.that.apply).(choice=Sometimes)`=="Checked","Sometimes",
+#     ifelse(ds12$`How.often.do.you.wear.the.mask?.(check.all.that.apply).(choice=Rarely)`=="Checked"|ds12$`When.do.you.wear.the.mask?.(check.all.that.apply).(choice=Rarely)`=="Checked","Rarely",NA)))
+# CrossTable(ds12$Mask_how_often,ds12$infected_household,prop.t = F,prop.chisq = F)
+# CrossTable(ds12$Mask_how_often,ds12$household_infected_at_baseline,prop.r = F,prop.t = F, prop.chisq = F)
+
+
+ds12$Mask_at_home=ifelse(ds12$`When.do.you.wear.the.mask?.(check.all.that.apply).(choice=Inside.my.home)`=="Checked"|ds12$`Where.do.you.wear.the.mask?.(check.all.that.apply).(choice=Inside.my.home)`=="Checked","Yes","No")
+
+ds12$Mask_at_home=ifelse(ds12[8]=="Unchecked"&ds12[9]=="Unchecked"&ds12[10]=="Unchecked"&ds12[31]=="Unchecked"&ds12[32]=="Unchecked"&ds12[33]=="Unchecked",NA,ds12$Mask_at_home)
+
+CrossTable(ds12$Mask_at_home,ds12$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds12$Mask_at_home,ds12$household_infected_at_baseline,prop.r = F,prop.t = F, prop.chisq = F)
+
+
+CrossTable(ds12$`Has.the.COVID.positive.contact.in.your.household.been.wearing.a.mask.in.the.past.week?`,ds12$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds12$`Has.the.COVID.positive.contact.in.your.household.been.wearing.a.mask.in.the.past.week?`,ds12$household_infected_at_baseline,prop.r = F,prop.t = F, prop.chisq = F)
+```
+
+
+## HC Ethnicity
+```{r HC Ethnicity}
+ds12$Race[ds12$Ethnicity=="Hispanic or Latino"] <- ds12$Ethnicity[ds12$Ethnicity=="Hispanic or Latino"]
+
+CrossTable(ds12$Race,ds12$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds12$Race,ds12$household_infected_at_baseline,prop.r = F,prop.t = F, prop.chisq = F)
+
+CrossTable(ds12$Ethnicity,ds12$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds12$Ethnicity,ds12$household_infected_at_baseline,prop.r = F,prop.t = F, prop.chisq = F)
+```
+
+## HC Comorbidities
+```{r HC Comorbidities}
+ds12nokid <- filter(ds12, Age>=18)
+
+CrossTable(ds12nokid$Diabetes,ds12nokid$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds12nokid$Diabetes,ds12nokid$household_infected_at_baseline,prop.r = F,prop.t = F, prop.chisq = F)
+
+ds12nokid$BMIcat=cut(ds12nokid$BMI,c(0,29.91,100))
+CrossTable(ds12nokid$BMIcat,ds12nokid$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds12nokid$BMIcat,ds12nokid$household_infected_at_baseline,prop.r = F,prop.t = F, prop.chisq = F)
+
+# ds12 %>% 
+#   group_by(household_infected_at_baseline) %>% 
+# summarise(n=sum(!is.na(BMI)))
+
+
+
+```
+## HC hours per day
+```{r}
+ds12$`Over.the.past.week,.on.average,.how.many.hours.per.day.have.you.spent.in.the.same.house.with.the.COV-positive.contact?.(not.including.sleeping.hours)`[ds12$`Over.the.past.week,.on.average,.how.many.hours.per.day.have.you.spent.in.the.same.house.with.the.COV-positive.contact?.(not.including.sleeping.hours)`=="No response"]=NA
+sum(is.na(ds12$`Over.the.past.week,.on.average,.how.many.hours.per.day.have.you.spent.in.the.same.house.with.the.COV-positive.contact?.(not.including.sleeping.hours)`))
+CrossTable(ds12$`Over.the.past.week,.on.average,.how.many.hours.per.day.have.you.spent.in.the.same.house.with.the.COV-positive.contact?.(not.including.sleeping.hours)`,ds12$infected_household,prop.t = F,prop.chisq = F)
+```
+
+## HC Education
+```{r HC Education}
+
+CrossTable(ds12nokid$`Highest.education.level.(select.one)`,ds12nokid$infected_household,prop.t = F,prop.chisq = F)
+CrossTable(ds12nokid$`Highest.education.level.(select.one)`,ds12nokid$household_infected_at_baseline,prop.r = F,prop.t = F, prop.chisq = F)
+```
+
+
+## HC Adjusted P-value
+```{r HC adjusted pvalue}
+ds12$infectedbi <- factor(ds12$infected_household,levels = 1:2,labels = c("event","noevent"))
+ds12$infectedbi <- relevel(ds12$infectedbi,"noevent")
+
+ds12$parentbi=ifelse(ds12$`What.is.your.relationship.to.the.COV-positive.contact.person?.I.am.their`=="Mother or father (Parent, including in-laws))",1,ifelse(is.na(ds12$`What.is.your.relationship.to.the.COV-positive.contact.person?.I.am.their`),NA,0))
+
+table(ds12$infectedbi)
+m0 <- glmer(infectedbi ~ 1 + (1 | household), data = ds12, family = binomial)
+summary(m0)
+exp(0.7151)/(1+exp(0.7151))
+exp(0.7151)
+
+m1 <- glmer(infectedbi ~ parentbi + (1 | household), data = ds12, family = binomial)
+coef(summary(m1))
+
+
+ds12$childbi=ifelse(ds12$`What.is.your.relationship.to.the.COV-positive.contact.person?.I.am.their`=="Son or daughter (Child)",1,ifelse(is.na(ds12$`What.is.your.relationship.to.the.COV-positive.contact.person?.I.am.their`),NA,0))
+
+m2 <- glmer(infectedbi ~ childbi + (1 | household), data = ds12, family = binomial)
+coef(summary(m2))
+exp(-0.8656+1.96*0.5199)
+
+ds12$partnerbi=ifelse(ds12$`What.is.your.relationship.to.the.COV-positive.contact.person?.I.am.their`=="Partner",1,ifelse(is.na(ds12$`What.is.your.relationship.to.the.COV-positive.contact.person?.I.am.their`),NA,0))
+
+m3 <- glmer(infectedbi ~ partnerbi + (1 | household), data = ds12, family = binomial)
+coef(summary(m3))
+exp(1.4085+1.96*0.5979)
+
+m4 <- glmer(infectedbi ~ `Are.you.acting.as.a.primary.caregiver.to.the.COV-positive.person?` + (1 | household), data = ds12, family = binomial)
+coef(summary(m4))
+
+ds12$agebi1=ifelse(ds12$Age<18,1,0)
+ds12$agebi2=ifelse(18<=ds12$Age&ds12$Age<=50,1,0)
+ds12$agebi3=ifelse(ds12$Age>50,1,0)
+
+mage <- glmer(infectedbi ~ agebi3 + (1 | household), data = ds12, family = binomial)
+coef(summary(mage))
+
+msex <- glmer(infectedbi ~ Sex + (1 | household), data = ds12, family = binomial)
+coef(summary(msex))
+
+names(ds12)[15:27] <- names(ds12)[15:27] %>% 
+  substring(regexpr("=",names(ds12)[15:27])+1) %>% 
+  str_replace_all(c("\\)"=" ","\\("=" "))
+ds12 <- ds12 %>% mutate(Same.bathroom=(ds12$`Same.bedroom.bathroom `=="Checked"|ds12$`Same.general.bathroom `=="Checked"))
+
+ds12$bedroombi=ifelse(ds12$`Same.room.for.sleeping `=="Checked",1,ifelse(is.na(ds12$`Same.room.for.sleeping `),NA,0))
+
+m5 <- glmer(infectedbi ~ bedroombi + (1 | household), data = ds12, family = binomial)
+coef(summary(m5))
+
+ds12$bathroombi=ifelse(ds12$Same.bathroom==TRUE,1,ifelse(is.na(ds12$Same.bathroom),NA,0))
+
+m6 <- glmer(infectedbi ~ bathroombi + (1 | household), data = ds12, family = binomial)
+coef(summary(m6))
+
+ds12$mealbi=ifelse(ds12$`Meals.eaten.together.at.the.dinner.table `=="Checked",1,ifelse(is.na(ds12$`Meals.eaten.together.at.the.dinner.table `),NA,0))
+
+m7 <- glmer(infectedbi ~ mealbi + (1 | household), data = ds12, family = binomial)
+coef(summary(m7))
+
+ds12$carbi=ifelse(ds12$`Shared.car.rides `=="Checked",1,ifelse(is.na(ds12$`Shared.car.rides `),NA,0))
+
+m8 <- glmer(infectedbi ~ carbi + (1 | household), data = ds12, family = binomial)
+coef(summary(m8))
+
+m9 <- glmer(infectedbi ~ Mask_at_home + (1 | household), data = ds12, family = binomial)
+coef(summary(m9))
+
+ds12$whitebi=ifelse(ds12$Race=="White or Caucasian",1,ifelse(is.na(ds12$Race),NA,0))
+ds12$blackbi=ifelse(ds12$Race=="Black or African American",1,ifelse(is.na(ds12$Race),NA,0))
+ds12$latinobi=ifelse(ds12$Ethnicity=="Hispanic or Latino",1,ifelse(is.na(ds12$Ethnicity),NA,0))
+ds12$otherracebi=ifelse(ds12$Race!="White or Caucasian"&ds12$Race!="Black or African American"&ds12$Race!="Hispanic or Latino",1,0)
+table(ds12$whitebi)
+m10 <- glmer(infectedbi ~ whitebi + (1 | household), data = ds12, family = binomial)
+coef(summary(m10))
+
+m11 <- glmer(infectedbi ~ blackbi + (1 | household), data = ds12, family = binomial)
+coef(summary(m11))
+
+m12 <- glmer(infectedbi ~ latinobi + (1 | household), data = ds12, family = binomial)
+coef(summary(m12))
+
+mminor <- glmer(infectedbi ~ otherracebi + (1 | household), data = ds12, family = binomial)
+coef(summary(mminor))
+# mantelhaen.test(xtabs(~parentbi+infected_household+household, data=ds12),alternative = "two.sided",correct = TRUE)
+# glimpse(ds12)
+
+# s <- glm(infectedbi~bathroombi,data=ds12,family = binomial)
+ds12nokid <- filter(ds12, Age>=18)
+
+datd <- ds12nokid %>% 
+  dplyr::select(infectedbi,household,Diabetes) %>% 
+  na.omit()
+
+m13 <- glmer(infectedbi ~ Diabetes + (1 | household), data = datd, family = binomial)
+coef(summary(m13))
+
+dato <- ds12nokid %>% 
+  dplyr::select(infectedbi,household,BMIcat) %>% 
+  na.omit()
+
+m14 <- glmer(infectedbi ~ BMIcat + (1 | household), data = dato, family = binomial)
+coef(summary(m14))
+exp(1.6790+1.96*0.6967)
+
+date <- ds12nokid %>% 
+  dplyr::select(infectedbi,household,`Highest.education.level.(select.one)`) %>% 
+  na.omit()
+
+date$edubi1 <- ifelse(date$`Highest.education.level.(select.one)`=="High school or lower", 1,0)
+m15 <- glmer(infectedbi ~ edubi1 + (1 | household), data = date, family = binomial)
+coef(summary(m15))
+
+date$edubi2 <- ifelse(date$`Highest.education.level.(select.one)`=="College degree", 1,0)
+m16 <- glmer(infectedbi ~ edubi2 + (1 | household), data = date, family = binomial)
+coef(summary(m16))
+
+date$edubi3 <- ifelse(date$`Highest.education.level.(select.one)`=="Graduate degree", 1,0)
+m17 <- glmer(infectedbi ~ edubi3 + (1 | household), data = date, family = binomial)
+coef(summary(m17))
+
+m <- glmer(infectedbi ~ `Highest.education.level.(select.one)` + (1 | household), data = date, family = binomial)
+r <- glmer(infectedbi ~ (1 | household), data = date, family = binomial)
+lrtest(m,r)
+
+a <- glm(infectedbi ~ `Highest.education.level.(select.one)`, data = date, family = binomial)
+b <- glm(infectedbi ~ 1, data = date, family = binomial)
+lrtest(a,b)
+
+
+
+```
+
+
