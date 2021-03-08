@@ -1,2 +1,2 @@
 # CoHOST
-Data analysis of SAR-Cov-2 transmission risk factors
+Data analysis of SARS-Cov-2 transmission risk factors
